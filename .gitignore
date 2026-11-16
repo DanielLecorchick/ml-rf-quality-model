@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+.env
+# Upstream source repositories are fetched locally, not redistributed.
+third_party/*
+!third_party/README.md
+!third_party/sources.json
+# Keep source observations, windows, evaluation artifacts out of Git.
+data/raw/
+data/extracted/
+data/processed/
+data/labels/*.csv
+results/
+*.zip
+*.npz
+*.pt
+*.pkl
+*.joblib

@@ -1,0 +1,9 @@
+[
+  {"name":"HamSCI_DRF_processing","url":"https://github.com/HamSCI/DRF_processing.git","role":"reference Digital RF data handling","license_note":"GPL-3.0"},
+  {"name":"Digital_RF","url":"https://github.com/MITHaystack/digital_rf.git","role":"Digital RF library source"},
+  {"name":"InceptionTime_original","url":"https://github.com/hfawaz/InceptionTime.git","role":"authors' original TensorFlow model"},
+  {"name":"tsai","url":"https://github.com/timeseriesAI/tsai.git","role":"PyTorch InceptionTime"},
+  {"name":"aeon","url":"https://github.com/aeon-toolkit/aeon.git","role":"MultiROCKET and alternative InceptionTime"},
+  {"name":"xgboost","url":"https://github.com/dmlc/xgboost.git","role":"XGBoost"},
+  {"name":"scikit_learn","url":"https://github.com/scikit-learn/scikit-learn.git","role":"Isolation Forest and evaluation metrics"}
+]
