@@ -14,7 +14,7 @@ def generate_synthetic(*, stations: int = 8, per_station: int = 36,
         raise ValueError("Use >=3 stations, >=4 windows per station, >=32 samples")
     rng = np.random.default_rng(seed)
     samples: list[np.ndarray] = []
-    station_ids, observations, ids, labels = [], [], [], []
+    station_ids, observations, ids, labels, timestamps = [], [], [], [], []
     t = np.arange(length) / length
     for station in range(stations):
         for j in range(per_station):
@@ -39,4 +39,5 @@ def generate_synthetic(*, stations: int = 8, per_station: int = 36,
             observations.append(f"synthetic:{sid}:day{j // 12}")
             ids.append(f"synthetic:{sid}:{j:04d}")
             labels.append(label)
-    return assemble_windows(samples, station_ids, observations, ids, labels, origin="synthetic")
+            timestamps.append(1_700_000_000 + j * 60)
+    return assemble_windows(samples, station_ids, observations, ids, labels, origin="synthetic", timestamps=timestamps)

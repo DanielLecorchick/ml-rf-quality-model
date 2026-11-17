@@ -24,6 +24,7 @@ class ModelPrediction:
 
 class RFModel:
     probability = False
+    threshold = 0.5
 
     def fit(self, signals: np.ndarray, features: np.ndarray, labels: np.ndarray) -> None:
         raise NotImplementedError
@@ -33,25 +34,33 @@ class RFModel:
 
     def predict(self, signals: np.ndarray, features: np.ndarray) -> ModelPrediction:
         score = np.asarray(self.score(signals, features), dtype=float).reshape(-1)
-        cutoff = 0.5 if self.probability else self.threshold
+        cutoff = self.threshold
         return ModelPrediction(score, (score >= cutoff).astype(np.int8), self.probability)
 
 
 class XGBoostRF(RFModel):
     probability = True
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, n_estimators: int = 150, max_depth: int = 4,
+                 learning_rate: float = 0.06, class_balance: bool = True):
+        self.class_balance = class_balance
         try:
             from xgboost import XGBClassifier
         except ImportError as exc:
             raise RuntimeError("Missing XGBoost: pip install -e '.[xgboost]'") from exc
         self.model = XGBClassifier(
-            n_estimators=150, max_depth=4, learning_rate=0.06,
+            n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate,
             subsample=0.85, colsample_bytree=0.85, objective="binary:logistic",
             eval_metric="logloss", random_state=seed, n_jobs=2,
         )
 
     def fit(self, signals, features, labels):
+        if self.class_balance:
+            labels = np.asarray(labels)
+            pos = np.count_nonzero(labels == 1)
+            neg = np.count_nonzero(labels == 0)
+            if pos and neg:
+                self.model.set_params(scale_pos_weight=neg / pos)
         self.model.fit(features, labels)
 
     def score(self, signals, features):
@@ -61,12 +70,19 @@ class XGBoostRF(RFModel):
 class MultiRocketRF(RFModel):
     probability = True
 
-    def __init__(self, seed: int = 42, kernels: int = 2000):
+    def __init__(self, seed: int = 42, kernels: int = 2000, class_balance: bool = True):
         try:
             from aeon.classification.convolution_based import MultiRocketClassifier
+            from sklearn.linear_model import LogisticRegression
         except ImportError as exc:
             raise RuntimeError("Missing aeon: pip install -e '.[rocket]'") from exc
-        self.model = MultiRocketClassifier(n_kernels=kernels, n_jobs=2, random_state=seed)
+        self.model = MultiRocketClassifier(
+            n_kernels=kernels, n_jobs=2, random_state=seed,
+            estimator=LogisticRegression(
+                max_iter=2000, class_weight="balanced" if class_balance else None,
+                random_state=seed,
+            ),
+        )
 
     def fit(self, signals, features, labels):
         self.model.fit(signals, labels)
@@ -78,12 +94,12 @@ class MultiRocketRF(RFModel):
 class IsolationForestRF(RFModel):
     """Fit on label=0 train examples; threshold = 95th percentile of train normal scores."""
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, n_estimators: int = 200):
         from sklearn.ensemble import IsolationForest
         from sklearn.preprocessing import StandardScaler
 
         self.scaler = StandardScaler()
-        self.model = IsolationForest(n_estimators=200, random_state=seed, n_jobs=2)
+        self.model = IsolationForest(n_estimators=n_estimators, random_state=seed, n_jobs=2)
 
     def fit(self, signals, features, labels):
         normal = features[np.asarray(labels) == 0]
@@ -132,8 +148,10 @@ class InceptionTimeRF(_NeuralBase):
     probability = True
 
     def __init__(self, seed: int = 42, epochs: int = 8, batch_size: int = 32,
-                 filters: int = 16):
+                 filters: int = 16, class_balance: bool = True):
         super().__init__(seed, epochs, batch_size)
+        self.class_balance = class_balance
+        self.filters = filters
         try:
             from tsai.models.InceptionTime import InceptionTime
         except ImportError as exc:
@@ -143,6 +161,12 @@ class InceptionTimeRF(_NeuralBase):
     def fit(self, signals, features, labels):
         torch, nn = _torch()
         self._normalize_fit(signals)
+        weights = None
+        if self.class_balance:
+            counts = np.bincount(np.asarray(labels, dtype=int), minlength=2)
+            weights = torch.as_tensor(
+                len(labels) / (2 * np.maximum(counts, 1)), dtype=torch.float32, device=self.device
+            )
         X = self._tensor(signals)
         y = torch.tensor(labels, dtype=torch.long)
         loader = torch.utils.data.DataLoader(
@@ -154,7 +178,7 @@ class InceptionTimeRF(_NeuralBase):
             for xb, yb in loader:
                 xb, yb = xb.to(self.device), yb.to(self.device)
                 optimizer.zero_grad(set_to_none=True)
-                loss = nn.functional.cross_entropy(self.model(xb), yb)
+                loss = nn.functional.cross_entropy(self.model(xb), yb, weight=weights)
                 loss.backward()
                 optimizer.step()
 
@@ -227,15 +251,32 @@ class ConvAutoencoderRF(_NeuralBase):
 AVAILABLE_MODELS = ("xgboost", "inceptiontime", "multirocket", "autoencoder", "isolation_forest")
 
 
-def make_model(name: str, *, seed: int = 42, epochs: int = 8, rocket_kernels: int = 2000) -> RFModel:
+MODEL_PARAMS = {
+    "xgboost": {"n_estimators", "max_depth", "learning_rate", "class_balance"},
+    "multirocket": {"kernels", "class_balance"},
+    "isolation_forest": {"n_estimators"},
+    "inceptiontime": {"epochs", "batch_size", "filters", "class_balance"},
+    "autoencoder": {"epochs", "batch_size"},
+}
+
+
+def make_model(name: str, *, seed: int = 42, epochs: int = 8,
+               rocket_kernels: int = 2000, params: dict | None = None) -> RFModel:
+    if name not in MODEL_PARAMS:
+        raise ValueError(f"Unknown model {name!r}; choose from {AVAILABLE_MODELS}")
+    kwargs = dict(params or {})
+    unknown = set(kwargs) - MODEL_PARAMS[name]
+    if unknown:
+        raise ValueError(f"Unsupported {name} hyperparameters: {sorted(unknown)}")
     if name == "xgboost":
-        return XGBoostRF(seed=seed)
+        return XGBoostRF(seed=seed, **kwargs)
     if name == "multirocket":
-        return MultiRocketRF(seed=seed, kernels=rocket_kernels)
+        kwargs.setdefault("kernels", rocket_kernels)
+        return MultiRocketRF(seed=seed, **kwargs)
     if name == "isolation_forest":
-        return IsolationForestRF(seed=seed)
+        return IsolationForestRF(seed=seed, **kwargs)
+    kwargs.setdefault("epochs", epochs)
     if name == "inceptiontime":
-        return InceptionTimeRF(seed=seed, epochs=epochs)
-    if name == "autoencoder":
-        return ConvAutoencoderRF(seed=seed, epochs=epochs)
-    raise ValueError(f"Unknown model {name!r}; choose from {AVAILABLE_MODELS}")
+        return InceptionTimeRF(seed=seed, **kwargs)
+    return ConvAutoencoderRF(seed=seed, **kwargs)
+

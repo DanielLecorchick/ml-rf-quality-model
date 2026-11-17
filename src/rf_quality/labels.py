@@ -40,6 +40,7 @@ def apply_labels(data: WindowDataset, csv_path: Path) -> WindowDataset:
         signals=data.signals, features=data.features, labels=values,
         station_ids=data.station_ids, observation_ids=data.observation_ids,
         window_ids=data.window_ids, feature_names=data.feature_names, origin=data.origin,
+        timestamps=data.timestamps,
     )
     result.validate()
     return result
