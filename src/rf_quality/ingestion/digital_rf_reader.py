@@ -25,6 +25,7 @@ class DRFWindow:
     window_id: str
     sample_index: int
     sample_rate_hz: float
+    timestamp_unix: float
 
 
 def find_observation_roots(folder: Path, channel: str = "ch0") -> list[Path]:
@@ -90,6 +91,7 @@ def iter_drf_windows(
         yield DRFWindow(
             iq=iq, station_id=resolved_station, observation_id=observation_id,
             window_id=f"{observation_id}:{idx}", sample_index=idx, sample_rate_hz=rate,
+            timestamp_unix=idx / rate,
         )
         emitted += 1
         if max_windows is not None and emitted >= max_windows:

@@ -1,0 +1,22 @@
+{
+  "xgboost": [
+    {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.06, "class_balance": true},
+    {"n_estimators": 200, "max_depth": 5, "learning_rate": 0.04, "class_balance": true}
+  ],
+  "multirocket": [
+    {"kernels": 2000, "class_balance": true},
+    {"kernels": 5000, "class_balance": true}
+  ],
+  "inceptiontime": [
+    {"epochs": 8, "filters": 16, "class_balance": true},
+    {"epochs": 8, "filters": 32, "class_balance": true}
+  ],
+  "autoencoder": [
+    {"epochs": 8, "batch_size": 32},
+    {"epochs": 12, "batch_size": 64}
+  ],
+  "isolation_forest": [
+    {"n_estimators": 100},
+    {"n_estimators": 200}
+  ]
+}

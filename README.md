@@ -24,7 +24,7 @@ Python 3.11 or 3.12 recommended, ideally on Linux/WSL. Use `uv` if available:
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install -e '.[dev,xgboost,rocket,inception,drf]'
+uv pip install -e '.[all,dev]'
 rf-quality doctor
 ```
 
@@ -32,7 +32,7 @@ If you use pip instead:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-python -m pip install -e '.[dev,xgboost,rocket,inception,drf]'
+python -m pip install -e '.[all,dev]'
 ```
 
 The `digital-rf` package may require system-level HDF5 libraries depending on the platform. For a small smoke test without installing every optional model, install `pip install -e '.[dev,xgboost,autoencoder]'`.
@@ -48,10 +48,11 @@ rf-quality train --data data/processed/synthetic.npz --models all \
   --epochs 5 --rocket-kernels 2000 --out results/all-synthetic
 ```
 
-Results contain `split.json` (held-out **stations**), per-model JSON, per-window CSV predictions,
-and `summary.csv`. **Never report synthetic-data scores as PSWS performance.** Missing optional
-model dependencies are reported as `missing_dependency` with installation guidance; add `--strict`
-to fail instead.
+Results now contain `seed-42/split.json` (three-way train/validation/test station holdouts),
+per-model validation trials, saved model artifacts, PNG figures, and top-level `comparison.md`,
+`summary.csv`, and `aggregate.json`. **Never report synthetic-data scores as PSWS performance.**
+Missing optional model dependencies are reported as `missing_dependency` with installation guidance;
+add `--strict` to fail instead.
 
 ### B. Download actual PSWS observations
 
@@ -115,6 +116,55 @@ before claiming generalization. Anomaly thresholds use only normal **training** 
 anomaly scores are not calibrated probabilities. The deep models use global training-set channel
 normalization, preserving relative amplitude instead of independently normalizing each window.
 
+## E. Save models, evaluate across seeds, and compare configurations
+
+The `train` command now uses separate **train/validation/test** sets. It selects hyperparameters
+and a decision threshold using validation data only, writes confusion matrices and PR curves,
+then saves the winning model and its preprocessing statistics.
+
+```bash
+rf-quality train --data data/processed/synthetic.npz \
+  --models xgboost isolation_forest autoencoder --epochs 2 \
+  --seeds 42 43 44 --out results/synthetic-validation
+
+# Compare model hyperparameters (more compute required):
+rf-quality train --data data/processed/psws_labeled.npz \
+  --models all --grid-file configs/example_grid.json \
+  --seeds 42 43 --split-mode station --out results/psws
+
+# Alternative: per-station chronological holdout, with boundary embargo
+rf-quality train --data data/processed/psws_labeled.npz \
+  --models xgboost --split-mode time --embargo-seconds 60 --out results/time-holdout
+```
+
+The best model per seed lives in `results/<run>/seed-<seed>/<model>/artifact/` with a
+versioned `manifest.json` and the model payload (`model.json`, `model.pt`, or `model.joblib`).
+For offline scoring:
+
+```bash
+rf-quality predict-file --model results/synthetic-validation/seed-42/xgboost/artifact \
+  --data data/processed/synthetic.npz --out results/synthetic-validation/scored.csv
+```
+
+**Security:** Only load your own trusted model files. Isolation Forest and MultiROCKET use
+joblib, which is pickle-based and unsafe for untrusted artifacts. Neural weights are loaded as
+tensors only. See [artifacts](docs/MODEL_ARTIFACTS.md) and
+[evaluation](docs/EVALUATION.md) for formats, metrics, and leakage controls.
+
+## F. Run the local FastAPI service and station alerts
+
+```bash
+rf-quality serve \
+  --model results/synthetic-validation/seed-42/xgboost/artifact \
+  --alert-db results/local_alerts.sqlite --port 8000 \
+  --min-windows 5 --poor-fraction 0.6
+```
+
+On the same machine, open `http://127.0.0.1:8000/docs` for request examples.
+`POST /predict` accepts `station_id`, optional `window_id`, and full-length `i` / `q` lists.
+`GET /alerts` lists local SQLite events. There is **no Vector API integration and no outbound
+alerting**. The service listens on loopback only. See [local API](docs/LOCAL_API.md).
+
 ## Repo layout
 
 ```text
@@ -126,7 +176,11 @@ src/rf_quality/
   synthetic.py                     # demo generator ONLY; explicit synthetic origin
   labels.py                        # reviewer CSV export/import
   models/adapters.py               # five models, common fit/score contract
-  evaluation.py                    # station-disjoint split and metric exports
+  evaluation.py                    # legacy station-disjoint benchmark
+  experiments.py                   # 3-way split, model search, threshold tuning, plots
+  artifacts.py                     # versioned save/reload + feature-schema checks
+  alerts.py                        # local SQLite station alerting
+  api.py                           # loopback-only FastAPI inference
   cli.py                           # ingest/build/synthetic/labels/train/doctor
 scripts/fetch_upstream_sources.sh   # clone source repos under third_party/
 third_party/sources.json            # source URLs and provenance
@@ -160,11 +214,12 @@ project without checking GPL obligations.
   has been completed here**. A real-file smoke test is the first next step.
 * Dataset: RF windows are complex I/Q split into 2 real channels. They remain in original units.
   Feature estimates are exploratory proxies, not reference-calibrated SNR measurements.
-* Validation: hold out stations. Also add time-based held-out periods for within-station
-  monitoring, multiple seeded repeats, class imbalance checks, precision-recall operating points,
-  and expert-reviewed test labels before a final paper.
-* API serving and Vector alerting are **not yet implemented**. Do not deploy alerting before
-  assessing false-positive rates on unseen stations and geophysical events.
+* Validation: station-disjoint and chronological holdouts, multiple seeds, class weighting,
+  validation-only threshold tuning, and visual reports are implemented. Expert-reviewed test
+  labels and real PSWS archive integration remain open work.
+* Local FastAPI prediction service and SQLite alerts are implemented, but **Vector integration
+  and production alert delivery are not**. Do not deploy operational alerts before assessing
+  false-positive rates on unseen stations and geophysical events.
 * Source provenance: [PSWS API docs](https://pswsnetwork.eng.ua.edu/about/),
   [Digital RF Python library](https://pypi.org/project/digital-rf/),
   [HamSCI DRF examples](https://github.com/HamSCI/DRF_processing),

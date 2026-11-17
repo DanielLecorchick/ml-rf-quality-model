@@ -20,6 +20,7 @@ class WindowDataset:
     window_ids: np.ndarray
     feature_names: tuple[str, ...] = FEATURE_NAMES
     origin: str = "unknown"
+    timestamps: np.ndarray | None = None  # UTC seconds per window; required for temporal holdouts
 
     def validate(self) -> None:
         if self.signals.ndim != 3 or self.signals.shape[1] != 2:
@@ -30,6 +31,8 @@ class WindowDataset:
         if any(len(x) != n for x in [self.labels, self.station_ids,
                                       self.observation_ids, self.window_ids]):
             raise ValueError("dataset row count mismatch")
+        if self.timestamps is not None and (self.timestamps.shape != (n,) or not np.isfinite(self.timestamps).all()):
+            raise ValueError("timestamps must be a finite [N] array of UTC seconds")
         if not np.isin(self.labels, [-1, 0, 1]).all():
             raise ValueError("labels must be -1, 0 or 1")
         if not np.isfinite(self.signals).all() or not np.isfinite(self.features).all():
@@ -50,6 +53,7 @@ class WindowDataset:
             window_ids=self.window_ids.astype(str),
             feature_names=np.asarray(self.feature_names, dtype=str),
             origin=np.asarray(self.origin, dtype=str),
+            **({"timestamps": np.asarray(self.timestamps, dtype=np.float64)} if self.timestamps is not None else {}),
         )
         return path
 
@@ -62,6 +66,7 @@ class WindowDataset:
                 observation_ids=z["observation_ids"], window_ids=z["window_ids"],
                 feature_names=tuple(map(str, z["feature_names"])),
                 origin=str(z["origin"].item()),
+                timestamps=z["timestamps"] if "timestamps" in z.files else None,
             )
         result.validate()
         return result
@@ -71,6 +76,7 @@ def assemble_windows(
     windows: list[np.ndarray], station_ids: list[str], observation_ids: list[str],
     window_ids: list[str], labels: list[int] | None = None, origin: str = "psws",
     feature_workers: int = 1,
+    timestamps: list[float] | np.ndarray | None = None,
 ) -> WindowDataset:
     if not windows:
         raise ValueError("No readable windows. Check sample rate, channel paths and missing segments")
@@ -93,4 +99,5 @@ def assemble_windows(
         station_ids=np.asarray(station_ids, dtype=str),
         observation_ids=np.asarray(observation_ids, dtype=str),
         window_ids=np.asarray(window_ids, dtype=str), origin=origin,
+        timestamps=np.asarray(timestamps, dtype=np.float64) if timestamps is not None else None,
     )

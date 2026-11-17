@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 from .dataset import WindowDataset, assemble_windows
-from .evaluation import benchmark
+from .experiments import run_experiments
 from .ingestion.psws_client import ObservationQuery, download_observations, safe_unzip, API_URL
 from .labels import apply_labels, create_label_template
 from .models.adapters import AVAILABLE_MODELS
@@ -59,7 +59,7 @@ def make_parser() -> argparse.ArgumentParser:
     apply.add_argument("--labels", type=Path, required=True)
     apply.add_argument("--out", type=Path, default=Path("data/processed/psws_labeled.npz"))
 
-    train = sub.add_parser("train", help="Train and evaluate models on held-out STATIONS")
+    train = sub.add_parser("train", help="Train/tune/save models using train/validation/test splits")
     train.add_argument("--data", type=Path, required=True)
     train.add_argument("--models", nargs="+", choices=[*AVAILABLE_MODELS, "all"], default=["all"])
     train.add_argument("--out", type=Path, default=Path("results/demo"))
@@ -67,6 +67,32 @@ def make_parser() -> argparse.ArgumentParser:
     train.add_argument("--epochs", type=int, default=8)
     train.add_argument("--rocket-kernels", type=int, default=2000)
     train.add_argument("--strict", action="store_true", help="Fail if optional model dependency missing")
+    train.add_argument("--seeds", nargs="+", type=int, default=None, help="Multiple seeded repeats")
+    train.add_argument("--split-mode", choices=["station", "time"], default="station")
+    train.add_argument("--validation-fraction", type=float, default=0.2)
+    train.add_argument("--test-fraction", type=float, default=0.2)
+    train.add_argument("--embargo-seconds", type=float, default=0,
+                       help="Temporal split: exclude windows near boundaries")
+    train.add_argument("--grid-file", type=Path, help="JSON mapping model name to list of hyperparameter dicts")
+    train.add_argument("--threshold-metric", choices=["f1", "balanced_accuracy", "recall_at_precision"],
+                       default="f1")
+    train.add_argument("--min-precision", type=float, default=0.8,
+                       help="For recall_at_precision tuning")
+    train.add_argument("--no-save-models", action="store_true")
+
+    pred = sub.add_parser("predict-file", help="Score NPZ windows using a saved trusted model bundle")
+    pred.add_argument("--model", type=Path, required=True)
+    pred.add_argument("--data", type=Path, required=True)
+    pred.add_argument("--out", type=Path, required=True)
+
+    serve = sub.add_parser("serve", help="Run local-only FastAPI prediction/alert service")
+    serve.add_argument("--model", type=Path, required=True, help="Directory with manifest.json")
+    serve.add_argument("--alert-db", type=Path, default=Path("results/local_alerts.sqlite"))
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--min-windows", type=int, default=5)
+    serve.add_argument("--poor-fraction", type=float, default=0.6)
+    serve.add_argument("--history-windows", type=int, default=20)
+    serve.add_argument("--cooldown-seconds", type=int, default=3600)
 
     sub.add_parser("doctor", help="Check which external model and RF packages are available")
     return parser
@@ -99,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         roots = find_observation_roots(args.root, channel=args.channel)
         if not roots:
             raise SystemExit("No Digital RF channel directory found. Extract ZIPs first; inspect nested ZIPs")
-        windows, stations, observations, ids = [], [], [], []
+        windows, stations, observations, ids, timestamps = [], [], [], [], []
         expected_length = None
         for root in roots:
             if len(windows) >= args.max_windows:
@@ -119,8 +145,9 @@ def main(argv: list[str] | None = None) -> int:
                 stations.append(window.station_id)
                 observations.append(window.observation_id)
                 ids.append(window.window_id)
+                timestamps.append(window.timestamp_unix)
         ds = assemble_windows(windows, stations, observations, ids, origin="psws",
-                              feature_workers=args.feature_workers)
+                              feature_workers=args.feature_workers, timestamps=timestamps)
         ds.save(args.out)
         print(f"Saved {len(ds.signals)} unlabeled observations to {args.out}; "
               f"shape={ds.signals.shape}. Review labels before training.")
@@ -144,11 +171,44 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         ds = WindowDataset.load(args.data)
         names = list(AVAILABLE_MODELS) if "all" in args.models else list(dict.fromkeys(args.models))
-        reports = benchmark(ds, names, args.out, seed=args.seed, epochs=args.epochs,
-                            rocket_kernels=args.rocket_kernels,
-                            continue_on_missing=not args.strict)
+        grid = json.loads(args.grid_file.read_text()) if args.grid_file else None
+        reports = run_experiments(
+            ds, names, args.out, seeds=args.seeds or [args.seed], split_mode=args.split_mode,
+            validation_fraction=args.validation_fraction, test_fraction=args.test_fraction,
+            embargo_seconds=args.embargo_seconds, grid=grid, epochs=args.epochs,
+            rocket_kernels=args.rocket_kernels, threshold_metric=args.threshold_metric,
+            min_precision=args.min_precision, save_models=not args.no_save_models,
+            strict=args.strict,
+        )
         print(json.dumps(reports, indent=2))
         print(f"Saved results under {args.out}")
+        return 0
+    if args.command == "predict-file":
+        import csv
+        from .artifacts import load_model_bundle, predict_bundle
+        ds = WindowDataset.load(args.data)
+        model, manifest = load_model_bundle(args.model)
+        scored = predict_bundle(model, manifest, ds.signals, ds.features, ds.feature_names)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with args.out.open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["window_id", "station_id", "predicted_label", "score"])
+            for window_id, station, pred, score in zip(
+                ds.window_ids, ds.station_ids, scored.predicted, scored.score
+            ):
+                writer.writerow([window_id, station, int(pred), float(score)])
+        print(f"Saved {len(scored.score)} scored observations to {args.out}")
+        return 0
+    if args.command == "serve":
+        from .alerts import AlertPolicy
+        from .api import create_app
+        import uvicorn
+        policy = AlertPolicy(min_windows=args.min_windows,
+                             poor_fraction=args.poor_fraction,
+                             history_windows=args.history_windows,
+                             cooldown_seconds=args.cooldown_seconds)
+        app = create_app(args.model, alert_db=args.alert_db, policy=policy)
+        uvicorn.run(app, host="127.0.0.1", port=args.port)
         return 0
     if args.command == "doctor":
         import importlib.util
