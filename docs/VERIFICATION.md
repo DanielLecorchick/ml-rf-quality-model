@@ -24,3 +24,20 @@ Not verified in this environment:
 
 Use the README's quick start to install extras and execute live smoke tests on your own
 computer/WSL. These are explicit limitations, not failures hidden by the test suite.
+
+## v0.2.0 development checks (November 18, 2026)
+
+* `PYTHONPATH=src pytest -q`: **26 passed** locally in the build environment.
+* `rf-quality synthetic` + `rf-quality train --models inceptiontime` with an
+  offline 6-station synthetic dataset, local `filters=4`, one epoch: **passed**;
+  generated an independently reloadable native PyTorch artifact, PR curve and
+  confusion matrix. Synthetic scores are not real PSWS evidence.
+* `rf-quality review-gallery` on synthetic NPZ: **passed**, 3 preview figures and
+  a browser annotation page generated.
+* Nested ZIP extraction, CSV template generation, SHA-256 provenance, source
+  fingerprints, generic HTTPS alert dispatch opt-in and idempotency: **tested**.
+* MultiROCKET on `aeon` and real DRF parsing: **still not executed here**.
+* `uv.lock` generation: **blocked by incomplete offline dependency cache**;
+  generate on a network-enabled WSL machine and commit it before final experiments.
+* Actual Vector API integration: **not possible without its schema and credentials**;
+  generic HTTP transport is available but disabled by default.

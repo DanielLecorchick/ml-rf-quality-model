@@ -1,9 +1,45 @@
 [
-  {"name":"HamSCI_DRF_processing","url":"https://github.com/HamSCI/DRF_processing.git","role":"reference Digital RF data handling","license_note":"GPL-3.0"},
-  {"name":"Digital_RF","url":"https://github.com/MITHaystack/digital_rf.git","role":"Digital RF library source"},
-  {"name":"InceptionTime_original","url":"https://github.com/hfawaz/InceptionTime.git","role":"authors' original TensorFlow model"},
-  {"name":"tsai","url":"https://github.com/timeseriesAI/tsai.git","role":"PyTorch InceptionTime"},
-  {"name":"aeon","url":"https://github.com/aeon-toolkit/aeon.git","role":"MultiROCKET and alternative InceptionTime"},
-  {"name":"xgboost","url":"https://github.com/dmlc/xgboost.git","role":"XGBoost"},
-  {"name":"scikit_learn","url":"https://github.com/scikit-learn/scikit-learn.git","role":"Isolation Forest and evaluation metrics"}
+  {
+    "name": "HamSCI_DRF_processing",
+    "url": "https://github.com/HamSCI/DRF_processing.git",
+    "role": "reference Digital RF data handling",
+    "license_note": "GPL-3.0",
+    "sha": "96aaa55ba7bd7f7529bde874f740d8de325ea821"
+  },
+  {
+    "name": "Digital_RF",
+    "url": "https://github.com/MITHaystack/digital_rf.git",
+    "role": "Digital RF library source",
+    "sha": "afb3e6deaf3513c63a1c0474a94f35b303279912"
+  },
+  {
+    "name": "InceptionTime_original",
+    "url": "https://github.com/hfawaz/InceptionTime.git",
+    "role": "authors' original TensorFlow model",
+    "sha": "952d115e83fb3a66d75c5858c702f8dd5eeb18b7"
+  },
+  {
+    "name": "tsai",
+    "url": "https://github.com/timeseriesAI/tsai.git",
+    "role": "PyTorch InceptionTime",
+    "sha": "bbb61982741d466bfa81669edc0e17f1971980af"
+  },
+  {
+    "name": "aeon",
+    "url": "https://github.com/aeon-toolkit/aeon.git",
+    "role": "MultiROCKET and alternative InceptionTime",
+    "sha": "2b1691199af1b37c58c9fa772366505b2e0847ae"
+  },
+  {
+    "name": "xgboost",
+    "url": "https://github.com/dmlc/xgboost.git",
+    "role": "XGBoost",
+    "sha": "9e36e1469f1874b49f8eb76b81d0580e0a5e1172"
+  },
+  {
+    "name": "scikit_learn",
+    "url": "https://github.com/scikit-learn/scikit-learn.git",
+    "role": "Isolation Forest and evaluation metrics",
+    "sha": "28670983af594da3af78b01b3da2fbbe0c8b2927"
+  }
 ]

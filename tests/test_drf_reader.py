@@ -33,3 +33,16 @@ def test_observation_discovery_and_read(monkeypatch, tmp_path):
     assert len(windows) == 1
     assert windows[0].iq.shape == (2, 600)
     assert windows[0].station_id == "S000028"
+
+
+def test_missing_drf_window_reported_to_audit_callback(monkeypatch, tmp_path):
+    (tmp_path / "S000028" / "obs" / "ch0").mkdir(parents=True)
+    monkeypatch.setitem(sys.modules, "digital_rf", types.SimpleNamespace(DigitalRFReader=MockReader))
+    events = []
+    windows = list(iter_drf_windows(tmp_path / "S000028" / "obs", seconds=60,
+                                    stride_seconds=60, on_gap=events.append))
+    assert len(windows) == 1
+    assert len(events) == 1
+    assert events[0]["sample_index"] == 600
+    assert events[0]["sample_count"] == 600
+    assert events[0]["station_id"] == "S000028"

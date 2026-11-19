@@ -8,6 +8,7 @@ Each directory contains:
 - `manifest.json` (schema version, project version, timestamp, model name, seed, constructor parameters,
   SHA-256 checksum, class mapping, binary-decision threshold, probability-vs-anomaly score semantics,
   expected I/Q channel/window length, ordered RF feature names, training-only normalization statistics,
+  SHA-256 fingerprints for local signal-feature source and local neural architectures,
   dataset origin, training metadata, and installed package versions).
 - `model.json` for XGBoost using XGBoost's native format;
   `model.pt` for the two PyTorch architectures (only `state_dict` tensor weights);
@@ -37,3 +38,9 @@ rf-quality predict-file \
   --data data/processed/synthetic.npz \
   --out results/synthetic-smoke/scored.csv
 ```
+
+A native InceptionTime-style model uses `backend=native`, with local network source
+stored in `src/rf_quality/models/inception_local.py`. Legacy bundles without a
+backend field use the former `tsai` network. Package versions and source fingerprints
+are validated on load; restore your locked environment if incompatible. Checksums
+protect against accidental drift, not malicious modifications.

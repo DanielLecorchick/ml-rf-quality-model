@@ -13,6 +13,8 @@ FEATURE_NAMES = (
     "peak_to_mean_power", "spectral_entropy", "spectral_flatness",
     "spectral_peak_ratio", "spectral_centroid", "spectral_spread",
     "phase_step_std", "amplitude_diff_std", "near_saturation_fraction",
+    "estimated_snr_proxy_db", "noise_floor_db_relative", "peak_prominence_db",
+    "frequency_step_std_cycles_per_sample",
 )
 
 
@@ -38,6 +40,13 @@ def extract_features(iq_channels: np.ndarray) -> np.ndarray:
     spread = float(np.sqrt(np.sum((np.abs(frequencies) - centroid)**2 * normalized)))
     phase_steps = np.angle(z[1:] * np.conj(z[:-1]))
     max_amplitude = amp.max()
+    noise = float(np.median(psd))
+    peak = float(psd.max())
+    # Proxy only: the median PSD is NOT independently measured receiver noise.
+    # Strong spectral peaks may correspond to interference, not desired transmitters.
+    snr_proxy_db = 10 * np.log10(1 + max(0.0, peak - noise) / noise)
+    noise_floor_db = 10 * np.log10(noise)
+    peak_prominence_db = 10 * np.log10(peak / noise)
     values = [
         power.mean(), power.std(), power.max(), amp.mean(), amp.std(),
         np.percentile(amp, 99), np.abs(z.mean()),
@@ -46,6 +55,8 @@ def extract_features(iq_channels: np.ndarray) -> np.ndarray:
         entropy, flatness, psd.max() / psd.mean(), centroid, spread,
         phase_steps.std(), np.diff(amp).std(),
         np.mean(amp >= 0.999 * max_amplitude) if max_amplitude > 0 else 1.0,
+        snr_proxy_db, noise_floor_db, peak_prominence_db,
+        phase_steps.std() / (2 * np.pi),
     ]
     result = np.asarray(values, dtype=np.float32)
     if not np.isfinite(result).all():

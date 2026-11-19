@@ -307,6 +307,8 @@ def run_experiments(
             }
             if save_models:
                 defaults = {"epochs": epochs} if name in ("inceptiontime", "autoencoder") else {}
+                if name == "inceptiontime":
+                    defaults["backend"] = "native"
                 if name == "multirocket":
                     defaults["kernels"] = rocket_kernels
                 defaults.update(best["parameters"])
@@ -323,6 +325,32 @@ def run_experiments(
                  "true_label": int(data.labels[i]), "predicted_label": int(s >= fitted.threshold),
                  "score": float(s)} for i, s in zip(split.test, test_scores)
             ], ["window_id", "station_id", "true_label", "predicted_label", "score"])
+            # Station-level diagnostics are important for identifying site-specific
+            # failure modes; some held-out stations have only one labeled class.
+            stations = data.station_ids[split.test]
+            station_rows = []
+            for station_id in sorted(set(map(str, stations))):
+                mask = stations == station_id
+                station_y = data.labels[split.test][mask]
+                station_scores = test_scores[mask]
+                station_predictions = (station_scores >= fitted.threshold).astype(int)
+                sn, sfp, sfn, stp = confusion_matrix(
+                    station_y, station_predictions, labels=[0, 1]).ravel()
+                station_rows.append({
+                    "station_id": station_id, "windows": int(mask.sum()),
+                    "actual_poor_count": int(np.count_nonzero(station_y)),
+                    "predicted_poor_count": int(np.count_nonzero(station_predictions)),
+                    "accuracy": float(accuracy_score(station_y, station_predictions)),
+                    "precision_poor": float(precision_score(station_y, station_predictions, zero_division=0)),
+                    "recall_poor": float(recall_score(station_y, station_predictions, zero_division=0)),
+                    "f1_poor": float(f1_score(station_y, station_predictions, zero_division=0)),
+                    "mean_score": float(np.mean(station_scores)),
+                    "tn": int(sn), "fp": int(sfp), "fn": int(sfn), "tp": int(stp),
+                })
+            _csv(model_root / "station_metrics.csv", station_rows,
+                 ["station_id", "windows", "actual_poor_count", "predicted_poor_count",
+                  "accuracy", "precision_poor", "recall_poor", "f1_poor", "mean_score",
+                  "tn", "fp", "fn", "tp"])
             (model_root / "metrics.json").write_text(json.dumps(report, indent=2) + "\n")
             summaries.append(report)
     (output / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")

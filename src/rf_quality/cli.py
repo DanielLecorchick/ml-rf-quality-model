@@ -41,6 +41,8 @@ def make_parser() -> argparse.ArgumentParser:
     build.add_argument("--channel", default="ch0")
     build.add_argument("--station", default=None, help="Override station ID (only for a single station)")
     build.add_argument("--max-windows", type=int, default=5000)
+    build.add_argument("--gap-report", type=Path, default=None,
+                       help="CSV path for unreadable/missing windows (default beside NPZ)")
     build.add_argument("--feature-workers", type=int, default=1, help="Dask threaded workers; requires .[dask]")
 
     demo = sub.add_parser("synthetic", help="Generate labeled *synthetic* RF data (not real PSWS labels)")
@@ -53,6 +55,12 @@ def make_parser() -> argparse.ArgumentParser:
     labels = sub.add_parser("label-template", help="Export CSV for reviewer annotations")
     labels.add_argument("--data", type=Path, required=True)
     labels.add_argument("--out", type=Path, default=Path("data/labels/review.csv"))
+
+    gallery = sub.add_parser("review-gallery", help="Create offline RF spectrogram review gallery")
+    gallery.add_argument("--data", type=Path, required=True)
+    gallery.add_argument("--out", type=Path, default=Path("data/review"))
+    gallery.add_argument("--max-windows", type=int, default=100)
+    gallery.add_argument("--seed", type=int, default=42)
 
     apply = sub.add_parser("apply-labels", help="Merge reviewer labels back into NPZ")
     apply.add_argument("--data", type=Path, required=True)
@@ -94,6 +102,16 @@ def make_parser() -> argparse.ArgumentParser:
     serve.add_argument("--history-windows", type=int, default=20)
     serve.add_argument("--cooldown-seconds", type=int, default=3600)
 
+    dispatch = sub.add_parser("alert-dispatch", help="Review or explicitly send local alerts via generic HTTPS")
+    dispatch.add_argument("--alert-db", type=Path, default=Path("results/local_alerts.sqlite"))
+    dispatch.add_argument("--endpoint", default=None,
+                          help="Generic HTTPS receiver; NOT a verified Vector API schema")
+    dispatch.add_argument("--token-env", default="RF_QUALITY_ALERT_TOKEN",
+                          help="Environment variable containing receiver token")
+    dispatch.add_argument("--confirm-send", action="store_true",
+                          help="Permit actual HTTP delivery (off by default)")
+    dispatch.add_argument("--limit", type=int, default=25)
+
     sub.add_parser("doctor", help="Check which external model and RF packages are available")
     return parser
 
@@ -117,8 +135,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Downloaded: {result}")
         if args.extract:
             dest = args.out.parent / "extracted" / q.identifier()
-            safe_unzip(result, dest)
-            print(f"Extracted: {dest}")
+            from .ingestion.archives import extract_observation_archives
+            extracted = extract_observation_archives(result, dest)
+            print(f"Extracted {len(extracted)} ZIP layer(s): {dest}")
         return 0
     if args.command == "build":
         from .ingestion.digital_rf_reader import find_observation_roots, iter_drf_windows
@@ -126,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         if not roots:
             raise SystemExit("No Digital RF channel directory found. Extract ZIPs first; inspect nested ZIPs")
         windows, stations, observations, ids, timestamps = [], [], [], [], []
+        gaps: list[dict] = []
         expected_length = None
         for root in roots:
             if len(windows) >= args.max_windows:
@@ -134,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             for window in iter_drf_windows(
                 root, channel=args.channel, seconds=args.seconds,
                 stride_seconds=args.stride_seconds, station_id=args.station,
-                max_windows=args.max_windows - len(windows),
+                max_windows=args.max_windows - len(windows), on_gap=gaps.append,
             ):
                 if expected_length is None:
                     expected_length = window.iq.shape[1]
@@ -149,6 +169,16 @@ def main(argv: list[str] | None = None) -> int:
         ds = assemble_windows(windows, stations, observations, ids, origin="psws",
                               feature_workers=args.feature_workers, timestamps=timestamps)
         ds.save(args.out)
+        import csv
+        gap_path = args.gap_report or args.out.with_name(args.out.stem + "_gaps.csv")
+        gap_path.parent.mkdir(parents=True, exist_ok=True)
+        fields = ["station_id", "observation_id", "sample_index", "sample_count",
+                  "sample_rate_hz", "timestamp_unix", "reason"]
+        with gap_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(gaps)
+        print(f"Missing/unreadable window audit: {gap_path} ({len(gaps)} windows)")
         print(f"Saved {len(ds.signals)} unlabeled observations to {args.out}; "
               f"shape={ds.signals.shape}. Review labels before training.")
         return 0
@@ -162,6 +192,12 @@ def main(argv: list[str] | None = None) -> int:
         ds = WindowDataset.load(args.data)
         create_label_template(ds, args.out)
         print(f"Created human-annotation CSV: {args.out} (0=acceptable, 1=poor, blank=unlabeled)")
+        return 0
+    if args.command == "review-gallery":
+        from .annotation import build_review_gallery
+        result = build_review_gallery(WindowDataset.load(args.data), args.out,
+                                      max_windows=args.max_windows, seed=args.seed)
+        print(f"Open {result.resolve()} in a browser; review and export review.csv")
         return 0
     if args.command == "apply-labels":
         ds = apply_labels(WindowDataset.load(args.data), args.labels)
@@ -180,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
             min_precision=args.min_precision, save_models=not args.no_save_models,
             strict=args.strict,
         )
+        from .provenance import write_run_provenance
+        write_run_provenance(args.data, args.out, arguments=vars(args), grid_path=args.grid_file)
         print(json.dumps(reports, indent=2))
         print(f"Saved results under {args.out}")
         return 0
@@ -209,6 +247,15 @@ def main(argv: list[str] | None = None) -> int:
                              cooldown_seconds=args.cooldown_seconds)
         app = create_app(args.model, alert_db=args.alert_db, policy=policy)
         uvicorn.run(app, host="127.0.0.1", port=args.port)
+        return 0
+    if args.command == "alert-dispatch":
+        import os
+        from .delivery import dispatch_pending_alerts
+        report = dispatch_pending_alerts(
+            args.alert_db, endpoint=args.endpoint,
+            token=os.environ.get(args.token_env),
+            confirm_send=args.confirm_send, limit=args.limit)
+        print(json.dumps(report.__dict__, indent=2))
         return 0
     if args.command == "doctor":
         import importlib.util

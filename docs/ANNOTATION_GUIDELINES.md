@@ -10,3 +10,12 @@ station. Consider known reference transmitter schedules, site-specific propagati
 
 Record reviewer, station, date, reason, source spectrogram, and observational context outside the
 simple demonstration CSV. Obtain independently reviewed examples for the final benchmark.
+
+### Visual annotation workflow
+
+Run `rf-quality review-gallery` and open its generated `index.html` in a browser.
+The export button downloads a CSV compatible with `rf-quality apply-labels`.
+Do not label by reading a single spectrogram alone: retain contextual metadata,
+instrument calibration, expected transmitters, time of day and reviewer rationale.
+The gallery samples stations evenly; it is not a substitute for stratified
+labeled sample planning or double-review of an independent test dataset.

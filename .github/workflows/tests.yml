@@ -1,0 +1,26 @@
+name: Python tests
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install project and test dependencies
+        run: |
+          if test -f uv.lock; then
+            uv sync --python 3.12 --locked --extra dev --extra xgboost --extra autoencoder --extra serve
+          else
+            uv venv --python 3.12
+            uv pip install -e '.[dev,xgboost,autoencoder,serve]'
+          fi
+      - name: Test
+        run: |
+          .venv/bin/python -m compileall -q src tests
+          .venv/bin/python -m pytest -q

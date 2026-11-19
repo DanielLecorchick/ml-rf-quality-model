@@ -22,3 +22,9 @@ results/
 *.pt
 *.pkl
 *.joblib
+
+# Local-only labeling gallery and its preview images
+data/review/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

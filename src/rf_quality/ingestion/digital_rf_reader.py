@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
-from typing import Iterator
+from typing import Callable, Iterator
 
 import numpy as np
 
@@ -58,6 +58,7 @@ def iter_drf_windows(
     stride_seconds: float = 60,
     station_id: str | None = None,
     max_windows: int | None = None,
+    on_gap: Callable[[dict[str, object]], None] | None = None,
 ) -> Iterator[DRFWindow]:
     try:
         import digital_rf as drf
@@ -86,6 +87,11 @@ def iter_drf_windows(
                 raise ValueError("Unexpected shape or non-finite data")
         except (OSError, IOError, RuntimeError, ValueError, KeyError) as exc:
             LOG.warning("Skipping unreadable/gap-containing window in %s at %d: %s", root, idx, exc)
+            if on_gap is not None:
+                on_gap({"station_id": resolved_station, "observation_id": observation_id,
+                        "sample_index": int(idx), "sample_count": int(window_len),
+                        "sample_rate_hz": float(rate), "timestamp_unix": float(idx / rate),
+                        "reason": str(exc)[:512]})
             continue
         iq = np.stack([samples.real, samples.imag]).astype(np.float32)
         yield DRFWindow(

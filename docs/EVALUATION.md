@@ -46,6 +46,7 @@ results/<run>/
       confusion_matrix.png
       precision_recall.png
       feature_importance.png
+      station_metrics.csv   # independent held-out station diagnostics
       artifact/{manifest.json,model.json}
     autoencoder/... (model.pt)
     isolation_forest/... (model.joblib)
@@ -68,3 +69,8 @@ rf-quality train --data data/processed/psws_labeled.npz \
   --models all --split-mode station --grid-file configs/example_grid.json \
   --seeds 42 43 --out results/psws-experiments
 ```
+
+Per-model `station_metrics.csv` contains test-set accuracy, precision/recall,
+confusion counts and mean score per held-out station. Stations with only one
+observed class retain their confusion counts; avoid over-interpreting F1 for
+small or single-class station subsets.
