@@ -64,7 +64,9 @@ def test_inception_native_source_and_bundle_roundtrip(tmp_path):
     ds = generate_synthetic(stations=3, per_station=4, length=64)
     model = make_model("inceptiontime", seed=11, params={"filters": 4, "epochs": 1})
     assert model.backend == "native"
-    assert model.model(torch.zeros(2, 2, 64)).shape == (2, 2)
+    assert model.model(
+        torch.zeros(2, 2, 64, device=model.device)
+    ).shape == (2, 2)
     model._normalize_fit(ds.signals)
     model.threshold = .5
     artifact = save_model_bundle(model, "inceptiontime", ds, tmp_path / "native", seed=11,
