@@ -1,8 +1,7 @@
 """Adapters for established model implementations.
 
-No upstream model sources are pasted here. XGBoost, sklearn, aeon, and tsai
-are imported from their official Python packages. Our autoencoder is a small
-original PyTorch baseline.
+XGBoost, sklearn and aeon are imported from their official packages.
+Our InceptionTime-style CNN and autoencoder are local PyTorch implementations.
 
 Binary semantics: 0 = acceptable, 1 = poor-quality; larger score = worse.
 For anomaly detectors, score is NOT a calibrated probability.
@@ -143,20 +142,28 @@ class _NeuralBase(RFModel):
 
 
 class InceptionTimeRF(_NeuralBase):
-    """Original InceptionTime architecture from the existing tsai PyTorch library."""
+    """Local InceptionTime-style CNN; optional legacy tsai backend for old bundles."""
 
     probability = True
 
     def __init__(self, seed: int = 42, epochs: int = 8, batch_size: int = 32,
-                 filters: int = 16, class_balance: bool = True):
+                 filters: int = 16, class_balance: bool = True, backend: str = "native"):
         super().__init__(seed, epochs, batch_size)
         self.class_balance = class_balance
         self.filters = filters
-        try:
-            from tsai.models.InceptionTime import InceptionTime
-        except ImportError as exc:
-            raise RuntimeError("Missing tsai: pip install -e '.[inception]'") from exc
-        self.model = InceptionTime(c_in=2, c_out=2, nf=filters).to(self.device)
+        self.backend = backend
+        if backend == "native":
+            from .inception_local import InceptionNetwork
+            self.model = InceptionNetwork(c_in=2, c_out=2, nf=filters).to(self.device)
+        elif backend == "tsai":
+            # Backward-compatibility only: artifacts produced by the 0.1.0 adapter.
+            try:
+                from tsai.models.InceptionTime import InceptionTime
+            except ImportError as exc:
+                raise RuntimeError("Legacy tsai model requires the exact tsai version from its manifest") from exc
+            self.model = InceptionTime(c_in=2, c_out=2, nf=filters).to(self.device)
+        else:
+            raise ValueError("backend must be native or tsai")
 
     def fit(self, signals, features, labels):
         torch, nn = _torch()
@@ -255,7 +262,7 @@ MODEL_PARAMS = {
     "xgboost": {"n_estimators", "max_depth", "learning_rate", "class_balance"},
     "multirocket": {"kernels", "class_balance"},
     "isolation_forest": {"n_estimators"},
-    "inceptiontime": {"epochs", "batch_size", "filters", "class_balance"},
+    "inceptiontime": {"epochs", "batch_size", "filters", "class_balance", "backend"},
     "autoencoder": {"epochs", "batch_size"},
 }
 

@@ -75,6 +75,16 @@ def save_model_bundle(
             "iq_std": np.asarray(model.stds).reshape(2).tolist(),
             "scope": "training windows only; no per-window normalization",
         }
+    params = dict(parameters or {})
+    if name == "inceptiontime":
+        params.setdefault("backend", getattr(model, "backend", "native"))
+    source_fingerprints = {"features.py": _sha256(Path(__file__).with_name("features.py"))}
+    if name == "inceptiontime" and params["backend"] == "native":
+        source_fingerprints["models/inception_local.py"] = _sha256(
+            Path(__file__).parent / "models" / "inception_local.py")
+    if name == "autoencoder":
+        source_fingerprints["models/adapters.py"] = _sha256(
+            Path(__file__).parent / "models" / "adapters.py")
     threshold = float(model.threshold)
     if not np.isfinite(threshold):
         raise ValueError("Nonfinite decision threshold")
@@ -84,7 +94,8 @@ def save_model_bundle(
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
         "name": name,
         "seed": int(seed),
-        "parameters": dict(parameters or {}),
+        "parameters": params,
+        "source_sha256": source_fingerprints,
         "model_file": filename,
         "sha256": _sha256(directory / filename),
         "decision_threshold": threshold,
@@ -103,7 +114,8 @@ def save_model_bundle(
     return directory
 
 
-def load_model_bundle(directory: Path) -> tuple[RFModel, dict[str, Any]]:
+def load_model_bundle(directory: Path, *, enforce_reproducibility: bool = True
+                      ) -> tuple[RFModel, dict[str, Any]]:
     """Load a *trusted* model bundle and verify its file checksum and schema."""
     directory = Path(directory)
     manifest = json.loads((directory / "manifest.json").read_text())
@@ -122,7 +134,30 @@ def load_model_bundle(directory: Path) -> tuple[RFModel, dict[str, Any]]:
     path = directory / filename
     if _sha256(path) != manifest.get("sha256"):
         raise ValueError("Model checksum does not match manifest")
-    model = make_model(name, seed=int(manifest["seed"]), params=manifest["parameters"])
+    parameters = dict(manifest["parameters"])
+    # Pre-v0.2 neural artifacts were backed by tsai. Preserve that architecture
+    # during reload so their tensor names do not silently map to a different model.
+    if name == "inceptiontime" and "backend" not in parameters:
+        parameters["backend"] = "tsai"
+    if enforce_reproducibility:
+        root = Path(__file__).parent
+        for relative, expected in manifest.get("source_sha256", {}).items():
+            if relative not in ("features.py", "models/inception_local.py", "models/adapters.py"):
+                raise ValueError("Unknown source fingerprint in model manifest")
+            actual = _sha256(root / relative)
+            if actual != expected:
+                raise ValueError(f"Project source changed since training: {relative}; restore source revision")
+        needed = {"xgboost": ("xgboost",), "isolation_forest": ("scikit-learn",),
+                  "multirocket": ("aeon", "scikit-learn"),
+                  "inceptiontime": ("torch",), "autoencoder": ("torch",)}[name]
+        if name == "inceptiontime" and parameters.get("backend") == "tsai":
+            needed = (*needed, "tsai")
+        for package in needed:
+            expected = manifest.get("library_versions", {}).get(package)
+            if expected is not None and importlib.metadata.version(package) != expected:
+                raise ValueError(f"Dependency version changed: {package} (trained with {expected}); "
+                                 "restore the locked environment before loading")
+    model = make_model(name, seed=int(manifest["seed"]), params=parameters)
     if name == "xgboost":
         model.model.load_model(str(path))
     elif name in ("isolation_forest", "multirocket"):

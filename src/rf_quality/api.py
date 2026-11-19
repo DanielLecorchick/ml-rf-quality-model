@@ -74,7 +74,12 @@ def create_app(model_directory: Path, *, alert_db: Path = Path("results/local_al
             output.append({"station_id": obs.station_id, "window_id": obs.window_id,
                            "quality": "poor" if pred else "acceptable", "poor_quality": bool(pred),
                            "score": float(score), "score_is_probability": result.is_probability,
-                           "threshold": float(model.threshold), "station": station})
+                           "threshold": float(model.threshold),
+                           "features": {key: float(value) for key, value in zip(FEATURE_NAMES, features[len(output)])},
+                           "confidence_score": (float(max(score, 1 - score))
+                                                if result.is_probability else None),
+                           "confidence_calibrated": False,
+                           "station": station})
         return output
 
     @app.post("/predict")

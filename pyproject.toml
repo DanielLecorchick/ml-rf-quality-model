@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ml-rf-quality-model"
-version = "0.1.0"
+version = "0.2.0"
 description = "CS523 PSWS RF quality assessment: ingestion, feature extraction, and five ML baselines"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy>=1.26,<3",
     "scipy>=1.11",
@@ -21,13 +21,14 @@ dependencies = [
 [project.optional-dependencies]
 xgboost = ["xgboost>=2.0"]
 rocket = ["aeon>=1.3,<2"]
-inception = ["torch>=2.2", "tsai>=0.3"]
+inception = ["torch>=2.2"]
+legacy-tsai = ["torch>=2.2", "tsai>=0.3"]
 autoencoder = ["torch>=2.2"]
 drf = ["digital-rf>=2.6"]
 dask = ["dask[array]>=2024.1"]
 serve = ["fastapi>=0.110", "uvicorn>=0.30"]
-models = ["xgboost>=2.0", "aeon>=1.3,<2", "torch>=2.2", "tsai>=0.3"]
-all = ["xgboost>=2.0", "aeon>=1.3,<2", "torch>=2.2", "tsai>=0.3", "digital-rf>=2.6", "dask[array]>=2024.1", "fastapi>=0.110", "uvicorn>=0.30"]
+models = ["xgboost>=2.0", "aeon>=1.3,<2", "torch>=2.2"]
+all = ["xgboost>=2.0", "aeon>=1.3,<2", "torch>=2.2", "digital-rf>=2.6", "dask[array]>=2024.1", "fastapi>=0.110", "uvicorn>=0.30"]
 dev = ["pytest>=8", "ruff>=0.8", "httpx>=0.27"]
 
 [project.scripts]

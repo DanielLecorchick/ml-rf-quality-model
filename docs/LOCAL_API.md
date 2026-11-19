@@ -32,7 +32,7 @@ Request body (`POST /predict`):
 
 **Important:** The two shown samples are only illustrative. The real `i` and `q` arrays must
 contain exactly the **trained window length** (e.g., 600 samples per channel), with finite numeric
-values, or the API returns HTTP 422. It extracts the 18 RF features automatically; raw Digital RF
+values, or the API returns HTTP 422. It extracts the 22 RF features automatically; raw Digital RF
 files must first be decoded into I/Q windows. The optional `window_id` should be unique per
 station/window to suppress accidental repeated alert counts.
 
@@ -55,3 +55,14 @@ an event when at least `min_windows` exist and the predicted poor fraction is ab
 in the local SQLite database; there are no webhooks, emails, or Vector integration.
 For a real deployment, add authentication, centralized data controls, independent alert validation,
 monitoring, and false-alarm analysis before allowing access outside loopback.
+
+The response includes the 22 model input feature values, the quality class,
+model score, decision threshold and local station status. `confidence_score` is
+provided only for the probability-like classifier outputs and is **uncalibrated**.
+For anomaly-based models it is `null`. Never present it as an error probability
+without calibration data and an independent validation study.
+
+Optional `rf-quality alert-dispatch` examines the local SQLite alert outbox
+without making network requests by default. `--confirm-send` enables an opt-in
+generic HTTPS receiver. It is *not* a verified Vector protocol implementation.
+See the README for its command-line interface and safety requirements.

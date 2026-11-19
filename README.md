@@ -7,11 +7,11 @@ The project ships working Python integration code for the **five requested model
 
 | Model | Upstream implementation | Input | Label use |
 |---|---|---|---|
-| XGBoost | `xgboost.XGBClassifier` | 18 RF signal features | Binary labels |
-| InceptionTime | `tsai.models.InceptionTime` (PyTorch) | (N,2,T) I/Q | Binary labels |
+| XGBoost | `xgboost.XGBClassifier` | 22 RF signal features | Binary labels |
+| InceptionTime-style CNN | **Local PyTorch implementation** (`models/inception_local.py`) | (N,2,T) I/Q | Binary labels |
 | MultiROCKET | `aeon.MultiRocketClassifier` | (N,2,T) I/Q | Binary labels |
 | Convolutional autoencoder | Small original PyTorch baseline in `models/adapters.py` | (N,2,T) I/Q | Train on acceptable-only |
-| Isolation Forest | `sklearn.ensemble.IsolationForest` | 18 RF signal features | Train on acceptable-only |
+| Isolation Forest | `sklearn.ensemble.IsolationForest` | 22 RF signal features | Train on acceptable-only |
 
 An optional `dask` extra enables threaded parallel feature extraction (`rf-quality build --feature-workers 4`).
 
@@ -35,7 +35,9 @@ python -m venv .venv && source .venv/bin/activate
 python -m pip install -e '.[all,dev]'
 ```
 
-The `digital-rf` package may require system-level HDF5 libraries depending on the platform. For a small smoke test without installing every optional model, install `pip install -e '.[dev,xgboost,autoencoder]'`.
+The `digital-rf` package may require system-level HDF5 libraries depending on the platform.
+**To freeze dependencies, run `bash scripts/generate_lock.sh` on a network-enabled machine and commit `uv.lock`.**
+Then install with `uv sync --locked --extra all --extra dev`. See [reproducibility](docs/REPRODUCIBILITY.md). For a small smoke test without installing every optional model, install `pip install -e '.[dev,xgboost,autoencoder]'`.
 
 ### A. Test the complete harness WITHOUT claiming real data quality
 
@@ -77,12 +79,12 @@ rf-quality ingest --bbox 32.0 35.0 -88.0 -84.0 \
 
 Download outcomes: **404** means no matching observations; **429** means rate-limited. The
 client retries some temporary failures. Downloaded ZIPs receive matching `.json` provenance
-manifests. For nested ZIP archives, extract the inner ZIP(s) into the same `data/extracted/` tree
-before running `build`. Do not commit large raw or derived observations.
+manifests. Nested ZIP archives are extracted automatically with depth, traversal, and expanded-size limits. Do not commit large raw or derived observations.
 
 ### C. Convert downloaded Digital RF into unlabeled windows
 
 The Digital RF reader expects a root **above** a `ch0/` directory (the code discovers roots).
+Unreadable windows are recorded in a `<dataset>_gaps.csv` audit file; they are never silently relabeled as good RF data.
 It reads the actual sample rate from DRF channel metadata and skips missing/unreadable windows,
 instead of zero-filling discontinuities. Observations with different samples/window are currently
 skipped when they conflict with the first observed rate. The default is 60-second, non-overlapping
@@ -95,7 +97,7 @@ rf-quality label-template --data data/processed/psws.npz --out data/labels/revie
 ```
 
 The NPZ contains `signals`, `features`, `feature_names`, `station_ids`, `observation_ids`,
-`window_ids`, and `labels` (initially **-1**, meaning unknown).
+`window_ids`, `timestamps`, and `labels` (initially **-1**, meaning unknown).
 
 ### D. Review quality labels and train
 
@@ -118,7 +120,8 @@ normalization, preserving relative amplitude instead of independently normalizin
 
 ## E. Save models, evaluate across seeds, and compare configurations
 
-The `train` command now uses separate **train/validation/test** sets. It selects hyperparameters
+The `train` command now uses separate **train/validation/test** sets. It additionally
+records `run_provenance.json` with the dataset checksum, grid checksum, Git revision, and runtime versions. It selects hyperparameters
 and a decision threshold using validation data only, writes confusion matrices and PR curves,
 then saves the winning model and its preprocessing statistics.
 
@@ -176,12 +179,16 @@ src/rf_quality/
   synthetic.py                     # demo generator ONLY; explicit synthetic origin
   labels.py                        # reviewer CSV export/import
   models/adapters.py               # five models, common fit/score contract
+  models/inception_local.py         # local InceptionTime-style CNN architecture
   evaluation.py                    # legacy station-disjoint benchmark
   experiments.py                   # 3-way split, model search, threshold tuning, plots
   artifacts.py                     # versioned save/reload + feature-schema checks
   alerts.py                        # local SQLite station alerting
   api.py                           # loopback-only FastAPI inference
-  cli.py                           # ingest/build/synthetic/labels/train/doctor
+  annotation.py                    # offline review gallery with spectra + CSV labeling
+  delivery.py                      # generic opt-in HTTPS alert outbox (not Vector-specific)
+  provenance.py                    # run-input hash and environment metadata
+  cli.py                           # ingest/build/review/train/serve/alert-dispatch/doctor
 scripts/fetch_upstream_sources.sh   # clone source repos under third_party/
 third_party/sources.json            # source URLs and provenance
 third_party/README.md              # license notes
@@ -199,7 +206,7 @@ bash scripts/fetch_upstream_sources.sh HamSCI_DRF_processing InceptionTime_origi
 bash scripts/fetch_upstream_sources.sh
 ```
 
-Clones are shallow, stored in ignored `third_party/` directories, and retain original licenses.
+Clones are checked out at **pinned upstream Git SHAs**, stored in ignored `third_party/` directories, and retain original licenses.
 **Note:** this distribution does not bundle the upstream Git repositories, because GitHub cannot
 be accessed from the environment used to generate this artifact. Cloning them on your own
 machine with the above script is necessary if you want local copies of all upstream sources.
@@ -227,3 +234,68 @@ project without checking GPL obligations.
   [tsai PyTorch implementation](https://timeseriesai.github.io/tsai/models.inceptiontime.html),
   [aeon MultiROCKET](https://www.aeon-toolkit.org/en/stable/api_reference/auto_generated/aeon.classification.convolution_based.MultiRocketClassifier.html),
   [XGBoost](https://xgboost.readthedocs.io/), [Isolation Forest](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html).
+
+
+## G. Review real data with a browser-based annotation gallery
+
+The basic CSV import/export remains available. A new offline visual review workflow provides
+I/Q waveforms, relative power spectra and spectrograms to inspect observations. The plots use
+**cycles/sample**, not calibrated hertz, because not all datasets retain sample-rate metadata.
+
+```bash
+rf-quality review-gallery --data data/processed/psws.npz \
+  --out data/review --max-windows 120 --seed 42
+# Open data/review/index.html locally. Label good/poor/uncertain and click Export review.csv.
+rf-quality apply-labels --data data/processed/psws.npz \
+  --labels ~/Downloads/review.csv --out data/processed/psws_labeled.npz
+```
+
+The gallery distributes its sample among stations rather than taking only the first station.
+Labels are user-reviewed, **not automatically generated scientific ground truth**. Record
+reviewer IDs and reasons; obtain expert review and independent stations for the test set.
+
+## H. Local notifications and future Vector integration
+
+The FastAPI service continues to record station quality and alerts locally. An optional outbox
+can inspect or deliver those *already-generated* alert records to an explicitly configured HTTPS
+receiver. **This is a generic JSON envelope, not a verified PSWS Vector API schema.** It cannot
+send to Vector without the real endpoint, auth contract and authorization.
+
+```bash
+# NO network activity; inspect pending local alerts.
+rf-quality alert-dispatch --alert-db results/local_alerts.sqlite
+
+# Only after testing the destination contract and gaining authorization:
+export RF_QUALITY_ALERT_TOKEN='secret-from-the-destination-provider'
+rf-quality alert-dispatch --alert-db results/local_alerts.sqlite \
+  --endpoint https://your-approved-receiver.example/api/alerts \
+  --confirm-send
+```
+
+The dispatcher uses HTTPS, bearer-token authentication, an idempotency key, and persistent
+SQLite per-alert delivery state. It sends **nothing** unless `--confirm-send` is provided.
+No external notifications should be activated with synthetic-trained models.
+
+## I. Model source and reproducibility
+
+We now implement a **local, single-network InceptionTime-style PyTorch architecture** rather
+than importing tsai at training time. This is not the original publication's five-member
+ensemble. The original `tsai` implementation is supported only for loading legacy bundles.
+Our autoencoder is also local. XGBoost, aeon MultiROCKET, scikit-learn Isolation Forest,
+Digital RF, and PyTorch remain package dependencies because they contain large, specialized
+runtimes and native extensions. Pin those distributions and their transitive dependencies via
+`uv.lock` rather than claiming that copying a few Python wrappers reproduces them.
+
+Source checkout script references include specific Git SHAs and the model bundles fingerprint
+feature computation source, local network code, and applicable library versions, refusing to
+silently load incompatible models. See [reproducibility](docs/REPRODUCIBILITY.md).
+
+### What still requires real-world work
+
+* Complete a live PSWS API download and Digital RF/HDF5 conversion on real station archives.
+* Label good and poor observations from many stations, ideally with expert adjudication.
+* Train/evaluate all five candidates with locked packages, particularly MultiROCKET on `aeon`.
+* Confirm signal sampling-rate assumptions, missing-data rates, clipping thresholds and
+  any proper SNR estimators using actual instrument metadata.
+* Obtain the actual Vector API schema/credentials and authority before sending real alerts.
+* Report real-station metrics, holdout procedure, feature ablations, false-alert rates and results.
